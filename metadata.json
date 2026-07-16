@@ -1,0 +1,6 @@
+{
+  "name": "Sistema de Cálculo - Ollaria Ateliê",
+  "description": "Sistema de cálculo profissional de queima de cerâmica para o Ollaria Ateliê com controle de orçamentos, especificações técnicas, painel administrativo, envio por e-mail, WhatsApp e PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

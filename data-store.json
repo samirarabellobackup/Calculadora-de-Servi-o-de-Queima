@@ -1,0 +1,13 @@
+{
+  "users": [
+    {
+      "id": "admin-1",
+      "nome": "Administrador do Ateliê",
+      "email": "ollariaatelie@gmail.com",
+      "senha": "2026adm",
+      "isAdmin": true
+    }
+  ],
+  "orders": [],
+  "notifications": []
+}
