@@ -59,7 +59,7 @@ export default function App() {
 
   // Piece Builder form states
   const [pecaNome, setPecaNome] = useState('Prato Decorativo');
-  const [tipoQueima, setTipoQueima] = useState<'biscoito' | 'esmalte' | 'ambas'>('biscoito');
+  const [tipoQueima, setTipoQueima] = useState<'biscoito' | 'esmalte' | 'monoqueima' | 'terceira_queima' | 'ambas'>('biscoito');
   const [metodoQueima, setMetodoQueima] = useState<string>('ajuste_inteligente');
   const [metodoQueimaEsmalte, setMetodoQueimaEsmalte] = useState<string>('ajuste_inteligente');
   const [altura, setAltura] = useState<number>(8);
@@ -169,7 +169,7 @@ export default function App() {
       } else {
         return 'fornada_inteira';
       }
-    } else { // esmalte
+    } else if (type === 'esmalte') {
       if (h <= 14.5) {
         return 'reserva_prateleira';
       } else if (h <= 30) {
@@ -177,6 +177,16 @@ export default function App() {
       } else {
         return 'fornada_inteira';
       }
+    } else if (type === 'monoqueima') {
+      if (h <= 14.5) {
+        return 'compartilhada';
+      } else if (h <= 30) {
+        return 'meia_fornada';
+      } else {
+        return 'fornada_inteira';
+      }
+    } else { // terceira_queima
+      return 'fornada_inteira';
     }
   };
 
@@ -232,12 +242,12 @@ export default function App() {
         return 180.00;
       }
       // Compartilhada por volume m³
-      // R$ 1.500,00 por metro cúbico m3
-      const volumeCost = volumeM3 * 1500.00;
+      // R$ 3.251,53 por metro cúbico m3 (baseado em R$ 530,00 para 0,163 m³ útil)
+      const volumeCost = volumeM3 * 3251.53;
       // Garante uma taxa mínima de queima por peça para não dar prejuízo ao ateliê
       const minQueimaVolume = 12.00;
       return Math.max(volumeCost, minQueimaVolume) + handlingFee;
-    } else {
+    } else if (type === 'esmalte') {
       // Esmalte (Alta temperatura, Cone 7 - 1240ºC)
       if (resolvedMethod === 'fornada_inteira' || h > 30) {
         return 450.00;
@@ -245,12 +255,35 @@ export default function App() {
       if (resolvedMethod === 'meia_fornada' || h > 14.5) {
         return 250.00;
       }
+      if (resolvedMethod === 'compartilhada') {
+        // Compartilhada por volume m³
+        // R$ 3.742,33 por metro cúbico m3 (baseado em R$ 610,00 para 0,163 m³ útil)
+        const volumeCost = volumeM3 * 3742.33;
+        // Garante uma taxa mínima de queima por peça
+        const minQueimaVolume = 15.00;
+        return Math.max(volumeCost, minQueimaVolume) + handlingFee;
+      }
       // Reserva de prateleira (baseado nos níveis práticos de 10cm ou 14.5cm)
       if (h <= 10) {
         return 60.00 + handlingFee; // 5 prateleiras de 10cm
       } else {
         return 80.00 + handlingFee; // 4 prateleiras de 14.5cm
       }
+    } else if (type === 'monoqueima') {
+      // Monoqueima (R$ 1.120,00 para o volume útil de 0,163 m³, por peça, meio forno ou forno inteiro)
+      if (resolvedMethod === 'fornada_inteira' || h > 30) {
+        return 1120.00;
+      }
+      if (resolvedMethod === 'meia_fornada' || h > 14.5) {
+        return 620.00;
+      }
+      // Compartilhada por volume m³ (R$ 6.871,17 por metro cúbico)
+      const volumeCost = volumeM3 * 6871.17;
+      const minQueimaVolume = 25.00;
+      return Math.max(volumeCost, minQueimaVolume) + handlingFee;
+    } else {
+      // Terceira queima (somente forno inteiro - R$ 560,00 para o volume útil de 0,163 m³)
+      return 560.00;
     }
   };
 
@@ -335,7 +368,7 @@ export default function App() {
           nacionalidadeMassa,
           marcaMassa: marcaMassa.trim() || 'Não informada',
           tempMaximaQueima,
-          ...(tipoQueima === 'esmalte' ? {
+          ...((tipoQueima === 'esmalte' || tipoQueima === 'monoqueima' || tipoQueima === 'terceira_queima') ? {
             tipoEsmalte,
             marcaEsmalte: marcaEsmalte.trim() || 'Estúdio',
             tempMaximaEsmalte,
@@ -372,7 +405,9 @@ export default function App() {
     msg += `*Especificação do Forno:* 195 Litros | Cone 7 (1240ºC)\n\n`;
     
     piecesList.forEach((p, idx) => {
-      const tipoLabel = p.tipo === 'biscoito' ? 'Queima de Biscoito (1000ºC)' : 'Queima de Esmalte (1240ºC)';
+      const tipoLabel = p.tipo === 'biscoito' ? 'Queima de Biscoito (1000ºC)' :
+                        p.tipo === 'esmalte' ? 'Queima de Esmalte (1240ºC)' :
+                        p.tipo === 'monoqueima' ? 'Monoqueima (1240ºC)' : 'Terceira Queima (750ºC)';
       const metodoLabel = p.metodo === 'compartilhada' ? 'Compartilhada (m³)' : 
                           p.metodo === 'reserva_prateleira' ? 'Reserva de Prateleira' :
                           p.metodo === 'meia_fornada' ? 'Meia Fornada' : 'Fornada Inteira';
@@ -386,8 +421,8 @@ export default function App() {
 
       if (p.detalhesTecnicos) {
         msg += `  • _Info Técnica:_ Argila ${p.detalhesTecnicos.nacionalidadeMassa} (${p.detalhesTecnicos.marcaMassa}), Temp Máx: ${p.detalhesTecnicos.tempMaximaQueima}ºC\n`;
-        if (p.tipo === 'esmalte') {
-          msg += `    Esmalte: ${p.detalhesTecnicos.tipoEsmalte} (${p.detalhesTecnicos.marcaEsmalte}), ${p.detalhesTecnicos.quantasCamadas} camadas, Temp Máx: ${p.detalhesTecnicos.tempMaximaEsmalte}ºC\n`;
+        if (p.tipo === 'esmalte' || p.tipo === 'monoqueima' || p.tipo === 'terceira_queima') {
+          msg += `    Esmalte: ${p.detalhesTecnicos.tipoEsmalte || 'N/A'} (${p.detalhesTecnicos.marcaEsmalte || 'N/A'}), ${p.detalhesTecnicos.quantasCamadas || 0} camadas, Temp Máx: ${p.detalhesTecnicos.tempMaximaEsmalte || 1240}ºC\n`;
         }
       }
       msg += `\n`;
@@ -490,7 +525,9 @@ export default function App() {
         doc.setFontSize(9);
         doc.setTextColor(45, 45, 45);
         
-        const tipoLabel = p.tipo === 'biscoito' ? 'Queima de Biscoito (1000oC)' : 'Queima de Esmalte (Alta Temp - 1240oC)';
+        const tipoLabel = p.tipo === 'biscoito' ? 'Queima de Biscoito (1000oC)' :
+                          p.tipo === 'esmalte' ? 'Queima de Esmalte (Alta Temp - 1240oC)' :
+                          p.tipo === 'monoqueima' ? 'Monoqueima (1240oC)' : 'Terceira Queima (750oC)';
         const metodoLabel = p.metodo === 'compartilhada' ? 'Compartilhada (por volume)' : 
                             p.metodo === 'reserva_prateleira' ? 'Reserva de Prateleira' :
                             p.metodo === 'meia_fornada' ? 'Meia Fornada' : 'Fornada Inteira';
@@ -508,8 +545,8 @@ export default function App() {
           doc.setFontSize(8.5);
           doc.setTextColor(138, 132, 124);
           let techStr = `Argila: ${p.detalhesTecnicos.nacionalidadeMassa} (${p.detalhesTecnicos.marcaMassa}) | Temp Max Argila: ${p.detalhesTecnicos.tempMaximaQueima}oC`;
-          if (p.tipo === 'esmalte') {
-            techStr += `\nEsmalte: ${p.detalhesTecnicos.tipoEsmalte} (${p.detalhesTecnicos.marcaEsmalte}) | Camadas: ${p.detalhesTecnicos.quantasCamadas} | Temp Max: ${p.detalhesTecnicos.tempMaximaEsmalte}oC`;
+          if (p.tipo === 'esmalte' || p.tipo === 'monoqueima' || p.tipo === 'terceira_queima') {
+            techStr += `\nEsmalte: ${p.detalhesTecnicos.tipoEsmalte || 'N/A'} (${p.detalhesTecnicos.marcaEsmalte || 'N/A'}) | Camadas: ${p.detalhesTecnicos.quantasCamadas || 0} | Temp Max: ${p.detalhesTecnicos.tempMaximaEsmalte || 1240}oC`;
           }
           doc.text(techStr, 20, y + 24);
         }
@@ -653,7 +690,7 @@ export default function App() {
       return;
     }
 
-    if (!aceitouDanosEsmalte && piecesList.some(p => p.tipo === 'esmalte')) {
+    if (!aceitouDanosEsmalte && piecesList.some(p => p.tipo === 'esmalte' || p.tipo === 'monoqueima' || p.tipo === 'terceira_queima')) {
       alert('Você precisa aceitar os termos de responsabilidade técnica de esmalte antes de enviar.');
       return;
     }
@@ -905,21 +942,21 @@ export default function App() {
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   <button 
                     onClick={() => {
                       setTipoQueima('biscoito');
                       setMetodoQueima('ajuste_inteligente');
                     }}
-                    className={`flex flex-col p-4 rounded-xl text-left transition-all border-2 cursor-pointer ${tipoQueima === 'biscoito' ? 'border-[#C15E3F] bg-[#FDF7F5] shadow-sm' : 'border-[#E2DED0] bg-white hover:border-[#8A847C]'}`}
+                    className={`flex flex-col p-3 rounded-xl text-left transition-all border-2 cursor-pointer ${tipoQueima === 'biscoito' ? 'border-[#C15E3F] bg-[#FDF7F5] shadow-sm' : 'border-[#E2DED0] bg-white hover:border-[#8A847C]'}`}
                     id="btn-select-biscoito"
                   >
                     <div className="flex justify-between items-center w-full mb-1">
                       <span className={`text-[10px] uppercase font-bold ${tipoQueima === 'biscoito' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 01</span>
                       <Flame className={`w-3.5 h-3.5 ${tipoQueima === 'biscoito' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
                     </div>
-                    <span className="text-sm font-bold text-[#4A443F]">Queima de Biscoito</span>
-                    <span className="text-[11px] text-[#8A847C] mt-1 leading-relaxed">Lenta até 1000ºC. Por volume ou fornada.</span>
+                    <span className="text-sm font-bold text-[#4A443F]">Biscoito</span>
+                    <span className="text-[11px] text-[#8A847C] mt-1 leading-normal">Lenta até 1000ºC. Por volume ou fornada.</span>
                   </button>
 
                   <button 
@@ -927,15 +964,47 @@ export default function App() {
                       setTipoQueima('esmalte');
                       setMetodoQueimaEsmalte('ajuste_inteligente');
                     }}
-                    className={`flex flex-col p-4 rounded-xl text-left transition-all border-2 cursor-pointer ${tipoQueima === 'esmalte' ? 'border-[#C15E3F] bg-[#FDF7F5] shadow-sm' : 'border-[#E2DED0] bg-white hover:border-[#8A847C]'}`}
+                    className={`flex flex-col p-3 rounded-xl text-left transition-all border-2 cursor-pointer ${tipoQueima === 'esmalte' ? 'border-[#C15E3F] bg-[#FDF7F5] shadow-sm' : 'border-[#E2DED0] bg-white hover:border-[#8A847C]'}`}
                     id="btn-select-esmalte"
                   >
                     <div className="flex justify-between items-center w-full mb-1">
                       <span className={`text-[10px] uppercase font-bold ${tipoQueima === 'esmalte' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 02</span>
                       <Sparkles className={`w-3.5 h-3.5 ${tipoQueima === 'esmalte' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
                     </div>
-                    <span className="text-sm font-bold text-[#4A443F]">Queima de Esmalte</span>
-                    <span className="text-[11px] text-[#8A847C] mt-1 leading-relaxed">Alta Temp (1240ºC). Requer prateleira ou fornada.</span>
+                    <span className="text-sm font-bold text-[#4A443F]">Esmalte</span>
+                    <span className="text-[11px] text-[#8A847C] mt-1 leading-normal">Alta Temp (1240ºC). Requer prateleira ou fornada.</span>
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      setTipoQueima('monoqueima');
+                      setMetodoQueima('ajuste_inteligente');
+                    }}
+                    className={`flex flex-col p-3 rounded-xl text-left transition-all border-2 cursor-pointer ${tipoQueima === 'monoqueima' ? 'border-[#C15E3F] bg-[#FDF7F5] shadow-sm' : 'border-[#E2DED0] bg-white hover:border-[#8A847C]'}`}
+                    id="btn-select-monoqueima"
+                  >
+                    <div className="flex justify-between items-center w-full mb-1">
+                      <span className={`text-[10px] uppercase font-bold ${tipoQueima === 'monoqueima' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 03</span>
+                      <Sparkles className={`w-3.5 h-3.5 ${tipoQueima === 'monoqueima' ? 'text-[#C15E3F]' : 'text-red-500'}`} />
+                    </div>
+                    <span className="text-sm font-bold text-[#4A443F]">Monoqueima</span>
+                    <span className="text-[11px] text-[#8A847C] mt-1 leading-normal">Raw + Glaze (1240ºC). Por peça, meio ou forno inteiro.</span>
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      setTipoQueima('terceira_queima');
+                      setMetodoQueima('fornada_inteira');
+                    }}
+                    className={`flex flex-col p-3 rounded-xl text-left transition-all border-2 cursor-pointer ${tipoQueima === 'terceira_queima' ? 'border-[#C15E3F] bg-[#FDF7F5] shadow-sm' : 'border-[#E2DED0] bg-white hover:border-[#8A847C]'}`}
+                    id="btn-select-terceira-queima"
+                  >
+                    <div className="flex justify-between items-center w-full mb-1">
+                      <span className={`text-[10px] uppercase font-bold ${tipoQueima === 'terceira_queima' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 04</span>
+                      <Sparkles className={`w-3.5 h-3.5 ${tipoQueima === 'terceira_queima' ? 'text-[#C15E3F]' : 'text-purple-500'}`} />
+                    </div>
+                    <span className="text-sm font-bold text-[#4A443F]">Terceira Queima</span>
+                    <span className="text-[11px] text-[#8A847C] mt-1 leading-normal">Baixa Temp (750ºC). Somente Forno Inteiro refratário.</span>
                   </button>
 
                   <button 
@@ -944,18 +1013,18 @@ export default function App() {
                       setMetodoQueima('ajuste_inteligente');
                       setMetodoQueimaEsmalte('ajuste_inteligente');
                     }}
-                    className={`flex flex-col p-4 rounded-xl text-left transition-all border-2 cursor-pointer ${tipoQueima === 'ambas' ? 'border-[#C15E3F] bg-[#FDF7F5] shadow-sm' : 'border-[#E2DED0] bg-white hover:border-[#8A847C]'}`}
+                    className={`flex flex-col p-3 rounded-xl text-left transition-all border-2 cursor-pointer ${tipoQueima === 'ambas' ? 'border-[#C15E3F] bg-[#FDF7F5] shadow-sm' : 'border-[#E2DED0] bg-white hover:border-[#8A847C]'}`}
                     id="btn-select-ambas"
                   >
                     <div className="flex justify-between items-center w-full mb-1">
-                      <span className={`text-[10px] uppercase font-bold ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 03</span>
+                      <span className={`text-[10px] uppercase font-bold ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 05</span>
                       <div className="flex gap-0.5">
                         <Flame className={`w-3.5 h-3.5 ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
                         <Sparkles className={`w-3.5 h-3.5 ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
                       </div>
                     </div>
                     <span className="text-sm font-bold text-[#4A443F]">Biscoito + Esmalte</span>
-                    <span className="text-[11px] text-[#8A847C] mt-1 leading-relaxed">Cadastra ambas de uma vez. Soma os preços ao final.</span>
+                    <span className="text-[11px] text-[#8A847C] mt-1 leading-normal">Cadastra ambas de uma vez. Soma os preços ao final.</span>
                   </button>
                 </div>
               </div>
@@ -990,6 +1059,7 @@ export default function App() {
                             id="select-firing-method-esmalte"
                           >
                             <option value="ajuste_inteligente">✨ Ajuste Inteligente</option>
+                            <option value="compartilhada">Compartilhada (m³)</option>
                             <option value="reserva_prateleira">Reserva Prateleira</option>
                             <option value="meia_fornada">Meia Fornada</option>
                             <option value="fornada_inteira">Fornada Inteira</option>
@@ -1009,26 +1079,31 @@ export default function App() {
                         className="w-full p-2.5 bg-white border border-[#E2DED0] rounded-xl text-sm outline-none focus:border-[#C15E3F]"
                         id="select-firing-method"
                       >
-                        {tipoQueima === 'biscoito' ? (
+                        {tipoQueima === 'biscoito' || tipoQueima === 'monoqueima' ? (
                           <>
                             <option value="ajuste_inteligente">✨ Ajuste Inteligente (Automático)</option>
                             <option value="compartilhada">Compartilhada (Por Volume m³)</option>
                             <option value="meia_fornada">Meia Fornada (Até 30 cm de altura)</option>
                             <option value="fornada_inteira">Fornada Inteira</option>
                           </>
-                        ) : (
+                        ) : tipoQueima === 'esmalte' ? (
                           <>
                             <option value="ajuste_inteligente">✨ Ajuste Inteligente (Automático)</option>
+                            <option value="compartilhada">Compartilhada (Por Volume m³)</option>
                             <option value="reserva_prateleira">Reserva de Prateleira Inteira</option>
                             <option value="meia_fornada">Meia Fornada (Até 30 cm de altura)</option>
                             <option value="fornada_inteira">Fornada Inteira</option>
+                          </>
+                        ) : (
+                          <>
+                            <option value="fornada_inteira">Fornada Inteira (Somente Forno Inteiro)</option>
                           </>
                         )}
                       </select>
                     )}
 
                     {/* Visual indicator of Smart Adjustment resolution */}
-                    {((tipoQueima === 'biscoito' || tipoQueima === 'ambas') && metodoQueima === 'ajuste_inteligente') ||
+                    {((tipoQueima === 'biscoito' || tipoQueima === 'monoqueima' || tipoQueima === 'ambas') && metodoQueima === 'ajuste_inteligente') ||
                      ((tipoQueima === 'esmalte' || tipoQueima === 'ambas') && metodoQueimaEsmalte === 'ajuste_inteligente') ? (
                       <div className="mt-2.5 p-3 bg-gradient-to-br from-[#FDF7F5] to-[#F2EFE9] border border-[#C15E3F]/25 rounded-xl text-xs space-y-1.5 shadow-sm">
                         <div className="flex items-center gap-1.5 text-[#C15E3F] font-bold">
@@ -1039,12 +1114,12 @@ export default function App() {
                           O sistema organizará as peças automaticamente nas prateleiras buscando o melhor aproveitamento e o menor preço possível.
                         </p>
                         <div className="grid grid-cols-1 gap-1.5 pt-1 border-t border-[#E2DED0]/50 text-[11px]">
-                          {(tipoQueima === 'biscoito' || tipoQueima === 'ambas') && metodoQueima === 'ajuste_inteligente' && (
+                          {(tipoQueima === 'biscoito' || tipoQueima === 'monoqueima' || tipoQueima === 'ambas') && metodoQueima === 'ajuste_inteligente' && (
                             <div className="flex justify-between items-center bg-white/70 px-2 py-1 rounded">
-                              <span className="text-[#8A847C]">Biscoito ({altura}cm):</span>
+                              <span className="text-[#8A847C]">{tipoQueima === 'monoqueima' ? 'Monoqueima' : 'Biscoito'} ({altura}cm):</span>
                               <span className="font-bold text-[#4A443F] uppercase">
-                                {resolveSmartMethod('biscoito', altura) === 'compartilhada' ? 'Queima Compartilhada (m³)' : 
-                                 resolveSmartMethod('biscoito', altura) === 'meia_fornada' ? 'Meia Fornada' : 'Fornada Inteira'}
+                                {resolveSmartMethod(tipoQueima === 'ambas' ? 'biscoito' : tipoQueima, altura) === 'compartilhada' ? 'Queima Compartilhada (m³)' : 
+                                 resolveSmartMethod(tipoQueima === 'ambas' ? 'biscoito' : tipoQueima, altura) === 'meia_fornada' ? 'Meia Fornada' : 'Fornada Inteira'}
                               </span>
                             </div>
                           )}
@@ -1058,8 +1133,8 @@ export default function App() {
                             </div>
                           )}
                           <div className="text-[10px] text-[#8A847C] italic leading-tight pt-1">
-                            {tipoQueima === 'esmalte' || tipoQueima === 'ambas' ? (
-                              <span className="block">⚠️ Esmalte requer espaçamento de segurança (peças não podem se encostar!).</span>
+                            {tipoQueima === 'esmalte' || tipoQueima === 'monoqueima' || tipoQueima === 'terceira_queima' || tipoQueima === 'ambas' ? (
+                              <span className="block">⚠️ {tipoQueima === 'monoqueima' ? 'Monoqueima' : tipoQueima === 'terceira_queima' ? 'Terceira queima' : 'Esmalte'} requer espaçamento de segurança (peças não podem se encostar!).</span>
                             ) : null}
                             {tipoQueima === 'biscoito' || tipoQueima === 'ambas' ? (
                               <span className="block mt-0.5">🟢 Biscoito permite empilhar (otimização de prateleira ativa).</span>
@@ -1171,7 +1246,7 @@ export default function App() {
                       />
                     </div>
 
-                    {(tipoQueima === 'esmalte' || tipoQueima === 'ambas') && (
+                    {(tipoQueima === 'esmalte' || tipoQueima === 'monoqueima' || tipoQueima === 'terceira_queima' || tipoQueima === 'ambas') && (
                       <>
                         <div className="grid grid-cols-2 gap-2 pt-1 border-t border-[#F0EEE8]">
                           <div>
@@ -1336,7 +1411,7 @@ export default function App() {
                   {piecesList.length > 0 && (
                     <div className="mt-6 pt-4 border-t border-[#F0EEE8] space-y-3">
                       {/* Runny Glaze acceptance terms for Esmalte */}
-                      {piecesList.some(p => p.tipo === 'esmalte') && (
+                      {piecesList.some(p => p.tipo === 'esmalte' || p.tipo === 'monoqueima' || p.tipo === 'terceira_queima') && (
                         <label className="flex items-start gap-2 p-2.5 bg-amber-50/50 border border-amber-200 rounded-lg text-[10px] text-[#785C3A] cursor-pointer">
                           <input 
                             type="checkbox" 
@@ -1550,7 +1625,7 @@ export default function App() {
                                 <div>
                                   <strong>Massa:</strong> {p.detalhesTecnicos.marcaMassa} ({p.detalhesTecnicos.nacionalidadeMassa}) | Máx: {p.detalhesTecnicos.tempMaximaQueima}ºC
                                 </div>
-                                {p.tipo === 'esmalte' && (
+                                {(p.tipo === 'esmalte' || p.tipo === 'monoqueima' || p.tipo === 'terceira_queima') && (
                                   <div>
                                     <strong>Esmalte:</strong> {p.detalhesTecnicos.tipoEsmalte} ({p.detalhesTecnicos.marcaEsmalte}) | {p.detalhesTecnicos.quantasCamadas} Camadas
                                   </div>

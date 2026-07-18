@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Flame, Sparkles, Layers, Info, RotateCcw, HelpCircle, Check, AlertTriangle } from 'lucide-react';
-import { PieceItem } from '../types';
+import { PieceItem, FiringType } from '../types';
 
 interface KilnOptimizerProps {
   piecesList: PieceItem[];
@@ -9,7 +9,7 @@ interface KilnOptimizerProps {
 export interface PackedPiece {
   id: string;
   nome: string;
-  tipo: 'biscoito' | 'esmalte';
+  tipo: FiringType;
   w: number; // largura (cm)
   d: number; // profundidade (cm)
   h: number; // altura (cm)
@@ -22,7 +22,7 @@ export interface PackedPiece {
 export interface ShelfLevel {
   id: string;
   number: number;
-  tipo: 'biscoito' | 'esmalte';
+  tipo: FiringType;
   pieces: PackedPiece[];
   maxHeight: number;
   utilizationArea: number; // cm² occupied
@@ -38,16 +38,17 @@ export interface SupportColumn {
   r: number; // radius (cm)
 }
 
-const SHELF_DIAMETER = 53; // cm
-const SHELF_RADIUS = SHELF_DIAMETER / 2; // 26.5 cm
-const COLUMN_RADIUS = 2; // 2cm radius (4cm diameter)
-const SAFETY_PADDING = 2; // 2cm safety spacing between pieces
+const SHELF_DIAMETER = 50; // cm de diâmetro útil de espaço plano (diâmetro real de 53cm facetado)
+const SHELF_RADIUS = SHELF_DIAMETER / 2; // 25 cm de raio de espaço útil plano
+const COLUMN_RADIUS = 1.75; // Colunas com diâmetro de 3,5cm (raio de 1,75cm)
+const SAFETY_PADDING_ESMALTE = 0.4; // Espaçamento de segurança para esmalte: 4mm (entre 3 e 5mm)
+const SAFETY_PADDING_BISCOITO = 0.1; // Espaçamento mínimo para biscoito: 1mm (permite contato e empilhamento)
 
-// Pre-defined columns layout (3 columns per shelf level to hold the next shelf)
+// Layout das 3 colunas de sustentação ajustadas para o raio plano útil (raio de 20cm da coluna até o centro)
 const SUPPORT_COLUMNS: SupportColumn[] = [
-  { x: 0, y: 21, r: COLUMN_RADIUS }, // Top column
-  { x: -18.18, y: -10.5, r: COLUMN_RADIUS }, // Bottom-left (21 * cos(210), 21 * sin(210))
-  { x: 18.18, y: -10.5, r: COLUMN_RADIUS }, // Bottom-right (21 * cos(330), 21 * sin(330))
+  { x: 0, y: 20, r: COLUMN_RADIUS }, // Coluna superior
+  { x: -17.32, y: -10, r: COLUMN_RADIUS }, // Coluna inferior esquerda (20 * cos(210º), 20 * sin(210º))
+  { x: 17.32, y: -10, r: COLUMN_RADIUS }, // Coluna inferior direita (20 * cos(330º), 20 * sin(330º))
 ];
 
 // Helper to check if a rectangle fits inside a circle of radius R
@@ -112,9 +113,11 @@ function rectanglesOverlap(
 function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
   const shelves: ShelfLevel[] = [];
   
-  // Separate into Biscoito and Esmalte (different temperatures/firings)
+  // Separate into separate firing runs (different temperatures/types)
   const biscoitoPieces = pieces.filter(p => p.tipo === 'biscoito');
   const esmaltePieces = pieces.filter(p => p.tipo === 'esmalte');
+  const monoqueimaPieces = pieces.filter(p => p.tipo === 'monoqueima');
+  const terceiraPieces = pieces.filter(p => p.tipo === 'terceira_queima');
 
   const palette = [
     '#E57373', '#F06292', '#BA68C8', '#9575CD', '#7986CB', 
@@ -129,9 +132,10 @@ function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
     return c;
   };
 
-  const packGroup = (groupPieces: PieceItem[], tipo: 'biscoito' | 'esmalte') => {
+  const packGroup = (groupPieces: PieceItem[], tipo: FiringType) => {
     // Sort pieces by area descending
     const sorted = [...groupPieces].sort((a, b) => (b.largura * b.profundidade) - (a.largura * a.profundidade));
+    const padding = tipo === 'biscoito' ? SAFETY_PADDING_BISCOITO : SAFETY_PADDING_ESMALTE;
 
     for (const piece of sorted) {
       let placed = false;
@@ -172,7 +176,7 @@ function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
 
       // Try placing on existing shelves of this type
       for (const shelf of shelves.filter(s => s.tipo === tipo)) {
-        const result = tryPlacePieceOnShelf(piece, shelf, getNextColor());
+        const result = tryPlacePieceOnShelf(piece, shelf, getNextColor(), padding);
         if (result) {
           shelf.pieces.push(result);
           shelf.maxHeight = Math.max(shelf.maxHeight, piece.altura);
@@ -193,7 +197,7 @@ function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
           utilizationArea: 0
         };
 
-        const result = tryPlacePieceOnShelf(piece, newShelf, getNextColor());
+        const result = tryPlacePieceOnShelf(piece, newShelf, getNextColor(), padding);
         if (result) {
           newShelf.pieces.push(result);
           newShelf.maxHeight = piece.altura;
@@ -223,33 +227,35 @@ function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
 
   packGroup(biscoitoPieces, 'biscoito');
   packGroup(esmaltePieces, 'esmalte');
+  packGroup(monoqueimaPieces, 'monoqueima');
+  packGroup(terceiraPieces, 'terceira_queima');
 
   return shelves;
 }
 
 // Try finding a valid position on a shelf
-function tryPlacePieceOnShelf(piece: PieceItem, shelf: ShelfLevel, color: string): PackedPiece | null {
+function tryPlacePieceOnShelf(piece: PieceItem, shelf: ShelfLevel, color: string, padding: number): PackedPiece | null {
   const w = piece.largura;
   const d = piece.profundidade;
 
   // We scan in spiral rings starting from center out to SHELF_RADIUS
-  // This packs pieces tighter around the center
-  for (let r = 0; r <= SHELF_RADIUS - Math.min(w, d) / 2; r += 1.5) {
-    const numSteps = r === 0 ? 1 : Math.max(8, Math.floor(2 * Math.PI * r / 1.5));
+  // This packs pieces tighter around the center (1.0cm steps for finer placement)
+  for (let r = 0; r <= SHELF_RADIUS - Math.min(w, d) / 2; r += 1.0) {
+    const numSteps = r === 0 ? 1 : Math.max(12, Math.floor(2 * Math.PI * r / 1.0));
     for (let i = 0; i < numSteps; i++) {
       const angle = (i * 2 * Math.PI) / numSteps;
       const x = r * Math.cos(angle);
       const y = r * Math.sin(angle);
 
-      // 1. Check if rectangle fits inside the circular shelf
+      // 1. Check if rectangle fits inside the circular useful shelf area
       if (!rectangleFitsInCircle(x, y, w, d, SHELF_RADIUS)) {
         continue;
       }
 
-      // 2. Check overlap with support columns (4cm diameter / 2cm radius)
+      // 2. Check overlap with support columns (3.5cm diameter / 1.75cm radius)
       let overlapsColumn = false;
       for (const col of SUPPORT_COLUMNS) {
-        if (rectangleOverlapsCircle(x, y, w, d, col.x, col.y, col.r, 1.5)) {
+        if (rectangleOverlapsCircle(x, y, w, d, col.x, col.y, col.r, padding)) {
           overlapsColumn = true;
           break;
         }
@@ -258,10 +264,10 @@ function tryPlacePieceOnShelf(piece: PieceItem, shelf: ShelfLevel, color: string
         continue;
       }
 
-      // 3. Check overlap with existing packed pieces (with 2cm safety spacing)
+      // 3. Check overlap with existing packed pieces (using the specific padding)
       let overlapsPiece = false;
       for (const p of shelf.pieces) {
-        if (rectanglesOverlap(x, y, w, d, p.x, p.y, p.w, p.d, SAFETY_PADDING)) {
+        if (rectanglesOverlap(x, y, w, d, p.x, p.y, p.w, p.d, padding)) {
           overlapsPiece = true;
           break;
         }
@@ -333,15 +339,20 @@ export const KilnOptimizer: React.FC<KilnOptimizerProps> = ({ piecesList }) => {
       </div>
 
       {showExplanation && (
-        <div className="p-3 bg-[#FDF7F5] border border-[#E57373]/30 rounded-xl text-xs space-y-2 text-[#4A443F]">
+        <div className="p-4 bg-[#FDF7F5] border border-[#E57373]/30 rounded-xl text-xs space-y-2.5 text-[#4A443F]">
           <p className="font-semibold text-[#C15E3F] flex items-center gap-1">
-            <Info className="w-3.5 h-3.5" /> Como funciona este cálculo inteligente?
+            <Info className="w-3.5 h-3.5" /> Como funciona o cálculo e arrumação inteligente?
           </p>
-          <ul className="list-disc pl-4 space-y-1 text-[#4A443F]/90 text-[11px] leading-relaxed">
-            <li><strong>Separação de Queimas:</strong> Peças de Biscoito (1000ºC) e Esmalte (1240ºC) são organizadas em prateleiras separadas pois exigem temperaturas e programações diferentes.</li>
-            <li><strong>Espaço das Colunas:</strong> Cada nível utiliza 3 colunas de sustentação de 4cm de diâmetro (representadas em cinza), que ocupam espaço físico.</li>
-            <li><strong>Espaçamento de Segurança (2 cm):</strong> O algoritmo reserva uma margem de segurança de 2 cm ao redor de cada peça para evitar contato acidental e possíveis deformações.</li>
-            <li><strong>Distribuição Circular:</strong> Otimizamos a disposição para ocupar as prateleiras de 53 cm da melhor forma possível, evitando que você precise alugar o forno inteiro se não precisar.</li>
+          <ul className="list-disc pl-4 space-y-2 text-[#4A443F]/90 text-[11.5px] leading-relaxed">
+            <li><strong>Separação de Temperatura:</strong> Peças de Biscoito (1000ºC) e Esmalte (1240ºC) são agrupadas separadamente por razões técnicas.</li>
+            <li><strong>Espaço Útil Reais (50 cm):</strong> A prateleira tem 53 cm de diâmetro externo total (facetada). O sistema calcula a arrumação segura considerando a área plana útil de <strong>50 cm de diâmetro</strong> (marcada em tracejado vermelho).</li>
+            <li><strong>Colunas de Sustentação (3,5 cm):</strong> Reservamos o espaço exato das 3 colunas de sustentação de 3,5 cm de largura (em cinza), impedindo colisão com as peças.</li>
+            <li><strong>Comportamento por Tipo de Queima:</strong>
+              <ul className="list-circle pl-5 mt-1 space-y-1 text-[11px] text-[#6E675F]">
+                <li><strong>Queima de Biscoito (1000ºC):</strong> Permite que as peças fiquem encostadas (mínimo de 1 mm para visualização) e <strong>sobrepostas/empilhadas</strong> verticalmente, maximizando o aproveitamento do forno.</li>
+                <li><strong>Queima de Esmalte (1240ºC):</strong> As peças <strong>nunca podem se tocar ou se sobrepor</strong> (risco de fusão permanente). O sistema impõe um espaçamento estrito de <strong>3 a 5 mm</strong> (ajustado em 4 mm) entre as peças.</li>
+              </ul>
+            </li>
           </ul>
         </div>
       )}
@@ -356,7 +367,12 @@ export const KilnOptimizer: React.FC<KilnOptimizerProps> = ({ piecesList }) => {
           <div className="w-full flex flex-col-reverse gap-3 items-center justify-center min-h-[180px] pt-6 pb-2">
             {shelves.map((s, index) => {
               const isActive = s.id === activeShelfId;
-              const isEsmalte = s.tipo === 'esmalte';
+              const getTipoBadgeStyle = (tipo: FiringType) => {
+                if (tipo === 'biscoito') return 'bg-orange-100 text-orange-700';
+                if (tipo === 'esmalte') return 'bg-amber-100 text-amber-700';
+                if (tipo === 'monoqueima') return 'bg-red-100 text-red-700';
+                return 'bg-purple-100 text-purple-700';
+              };
               
               return (
                 <button
@@ -371,9 +387,7 @@ export const KilnOptimizer: React.FC<KilnOptimizerProps> = ({ piecesList }) => {
                 >
                   <div className="flex justify-between items-center w-full">
                     <span className="text-[10px] font-bold text-[#4A443F]">Prateleira {index + 1}</span>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase ${
-                      isEsmalte ? 'bg-amber-100 text-amber-700' : 'bg-orange-100 text-orange-700'
-                    }`}>
+                    <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase ${getTipoBadgeStyle(s.tipo)}`}>
                       {s.tipo}
                     </span>
                   </div>
@@ -403,10 +417,14 @@ export const KilnOptimizer: React.FC<KilnOptimizerProps> = ({ piecesList }) => {
               <div>
                 <span className="text-xs font-bold text-[#4A443F] block">Arrumação da Prateleira #{shelves.findIndex(s => s.id === activeShelf.id) + 1}</span>
                 <span className="text-[10px] text-[#8A847C] flex items-center gap-1">
-                  {activeShelf.tipo === 'esmalte' ? (
-                    <><Sparkles className="w-3 h-3 text-amber-500" /> Queima de Esmalte (1240ºC)</>
-                  ) : (
+                  {activeShelf.tipo === 'biscoito' ? (
                     <><Flame className="w-3 h-3 text-[#C15E3F]" /> Queima de Biscoito (1000ºC)</>
+                  ) : activeShelf.tipo === 'esmalte' ? (
+                    <><Sparkles className="w-3 h-3 text-amber-500" /> Queima de Esmalte (1240ºC)</>
+                  ) : activeShelf.tipo === 'monoqueima' ? (
+                    <><Sparkles className="w-3 h-3 text-red-500" /> Monoqueima (1240ºC)</>
+                  ) : (
+                    <><Sparkles className="w-3 h-3 text-purple-500" /> Terceira Queima (750ºC)</>
                   )}
                 </span>
               </div>
@@ -435,13 +453,25 @@ export const KilnOptimizer: React.FC<KilnOptimizerProps> = ({ piecesList }) => {
                   strokeWidth="0.8" 
                 />
 
+                {/* 50cm useful flat area (subtle dashed line in terracotta) */}
+                <circle 
+                  cx="0" 
+                  cy="0" 
+                  r="25" 
+                  fill="none" 
+                  stroke="#C15E3F" 
+                  strokeWidth="0.45" 
+                  strokeDasharray="1,1.5"
+                  opacity="0.8"
+                />
+
                 {/* Grid guidelines for scaling (subtle) */}
                 <circle cx="0" cy="0" r="20" fill="none" stroke="#D5D0C5" strokeWidth="0.2" strokeDasharray="1,1" />
                 <circle cx="0" cy="0" r="10" fill="none" stroke="#D5D0C5" strokeWidth="0.2" strokeDasharray="1,1" />
                 <line x1="-26.5" y1="0" x2="26.5" y2="0" stroke="#D5D0C5" strokeWidth="0.1" strokeDasharray="1,1" />
                 <line x1="0" y1="-26.5" x2="0" y2="26.5" stroke="#D5D0C5" strokeWidth="0.1" strokeDasharray="1,1" />
 
-                {/* Support Columns (3 support props, 4cm diameter -> 2cm radius) */}
+                {/* Support Columns (3 support props, 3.5cm diameter -> 1.75cm radius) */}
                 {SUPPORT_COLUMNS.map((col, idx) => (
                   <g key={`col-${idx}`}>
                     <circle 
@@ -473,16 +503,17 @@ export const KilnOptimizer: React.FC<KilnOptimizerProps> = ({ piecesList }) => {
                   const d = isStacked ? p.d * 0.9 : p.d;
                   const halfW = w / 2;
                   const halfD = d / 2;
+                  const currentPadding = p.tipo === 'biscoito' ? SAFETY_PADDING_BISCOITO : SAFETY_PADDING_ESMALTE;
 
                   return (
                     <g key={p.id}>
                       {/* Safety Padding Boundary (Dashed line) - Only draw for non-stacked base pieces to avoid clutter */}
                       {!isStacked && (
                         <rect
-                          x={x - (halfW + 1)}
-                          y={y - (halfD + 1)}
-                          width={w + 2}
-                          height={d + 2}
+                          x={x - (halfW + currentPadding / 2)}
+                          y={y - (halfD + currentPadding / 2)}
+                          width={w + currentPadding}
+                          height={d + currentPadding}
                           rx="1.2"
                           ry="1.2"
                           fill="none"

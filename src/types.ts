@@ -1,4 +1,4 @@
-export type FiringType = 'biscoito' | 'esmalte';
+export type FiringType = 'biscoito' | 'esmalte' | 'monoqueima' | 'terceira_queima';
 
 export type BiscoitoMethod = 'compartilhada' | 'meia_fornada' | 'fornada_inteira';
 export type EsmalteMethod = 'reserva_prateleira' | 'meia_fornada' | 'fornada_inteira';
