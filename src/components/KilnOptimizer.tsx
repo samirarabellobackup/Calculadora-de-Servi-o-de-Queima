@@ -26,6 +26,7 @@ export interface ShelfLevel {
   pieces: PackedPiece[];
   maxHeight: number;
   utilizationArea: number; // cm² occupied
+  supportColumns?: SupportColumn[];
 }
 
 // Support columns (props) per shelf
@@ -41,7 +42,7 @@ export interface SupportColumn {
 const SHELF_DIAMETER = 50; // cm de diâmetro útil de espaço plano (diâmetro real de 53cm facetado)
 const SHELF_RADIUS = SHELF_DIAMETER / 2; // 25 cm de raio de espaço útil plano
 const COLUMN_RADIUS = 1.75; // Colunas com diâmetro de 3,5cm (raio de 1,75cm)
-const SAFETY_PADDING_ESMALTE = 0.4; // Espaçamento de segurança para esmalte: 4mm (entre 3 e 5mm)
+const SAFETY_PADDING_ESMALTE = 0.5; // Espaçamento de segurança para esmalte: 5mm (entre 5mm e 1cm)
 const SAFETY_PADDING_BISCOITO = 0.1; // Espaçamento mínimo para biscoito: 1mm (permite contato e empilhamento)
 
 // Layout das 3 colunas de sustentação ajustadas para o raio plano útil (raio de 20cm da coluna até o centro)
@@ -66,8 +67,9 @@ function rectangleFitsInCircle(x: number, y: number, w: number, d: number, R: nu
 
   for (const corner of corners) {
     const distSq = corner.cx * corner.cx + corner.cy * corner.cy;
-    // We add 1 cm margin to the shelf edge for safety
-    if (distSq > (R - 1.0) * (R - 1.0)) {
+    // Since 50cm (radius R=25cm) is already flat useful space inside the physical 53cm shelf,
+    // we only need a very small safety boundary (e.g. 0.2cm) from R to fit maximum pieces.
+    if (distSq > (R - 0.2) * (R - 0.2)) {
       return false;
     }
   }
@@ -109,6 +111,80 @@ function rectanglesOverlap(
   return Math.abs(x1 - x2) < minGapX && Math.abs(y1 - y2) < minGapY;
 }
 
+// Helper to find a safe support column rotation for a set of pieces
+function findSafeColumnsRotation(
+  pieces: { x: number; y: number; w: number; d: number }[],
+  padding: number
+): SupportColumn[] | null {
+  if (pieces.length === 0) return SUPPORT_COLUMNS;
+
+  // Try 12 different rotation angles for the support columns (from 0 to 110 degrees)
+  // Since columns are spaced symmetrically 120 degrees apart, this covers all unique configurations
+  for (let angleDeg = 0; angleDeg < 120; angleDeg += 10) {
+    const theta = (angleDeg * Math.PI) / 180;
+    const rotatedCols = SUPPORT_COLUMNS.map(col => {
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+      return {
+        x: col.x * cosT - col.y * sinT,
+        y: col.x * sinT + col.y * cosT,
+        r: col.r
+      };
+    });
+
+    let safeRotation = true;
+    for (const col of rotatedCols) {
+      for (const p of pieces) {
+        if (rectangleOverlapsCircle(p.x, p.y, p.w, p.d, col.x, col.y, col.r, padding)) {
+          safeRotation = false;
+          break;
+        }
+      }
+      if (!safeRotation) break;
+    }
+
+    if (safeRotation) {
+      return rotatedCols;
+    }
+  }
+
+  return null;
+}
+
+// Find a set of candidate distinct positions to try placing the first piece of a shelf
+function getCandidatePositionsForPiece(
+  piece: PieceItem,
+  shelf: ShelfLevel,
+  padding: number
+): { x: number; y: number }[] {
+  const w = piece.largura;
+  const d = piece.profundidade;
+  const candidates: { x: number; y: number }[] = [];
+
+  // Candidate 1: Center of the shelf
+  if (rectangleFitsInCircle(0, 0, w, d, SHELF_RADIUS)) {
+    candidates.push({ x: 0, y: 0 });
+  }
+
+  // Candidate 2: Try some distinct off-center positions at various radii and angles
+  for (let r = 4.0; r <= SHELF_RADIUS - Math.min(w, d) / 2; r += 4.0) {
+    for (let angleIdx = 0; angleIdx < 8; angleIdx++) {
+      const angle = (angleIdx * 2 * Math.PI) / 8;
+      const x = r * Math.cos(angle);
+      const y = r * Math.sin(angle);
+
+      if (rectangleFitsInCircle(x, y, w, d, SHELF_RADIUS)) {
+        const isDistinct = candidates.every(c => Math.hypot(c.x - x, c.y - y) > 3.0);
+        if (isDistinct) {
+          candidates.push({ x, y });
+        }
+      }
+    }
+  }
+
+  return candidates.slice(0, 10);
+}
+
 // 2D Bin Packing algorithm for circular shelves
 function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
   const shelves: ShelfLevel[] = [];
@@ -125,25 +201,28 @@ function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
     '#AED581', '#D4E157', '#FFD54F', '#FFB74D', '#FF8A65'
   ];
 
-  let colorIdx = 0;
-  const getNextColor = () => {
-    const c = palette[colorIdx % palette.length];
-    colorIdx++;
-    return c;
-  };
+  // Assign stable colors to each piece from the start to prevent trial runs from shuffling them
+  const pieceColors: Record<string, string> = {};
+  pieces.forEach((p, index) => {
+    pieceColors[p.id] = palette[index % palette.length];
+  });
 
   const packGroup = (groupPieces: PieceItem[], tipo: FiringType) => {
-    // Sort pieces by area descending
+    // Sort pieces by area descending to pack larger items first
     const sorted = [...groupPieces].sort((a, b) => (b.largura * b.profundidade) - (a.largura * a.profundidade));
     const padding = tipo === 'biscoito' ? SAFETY_PADDING_BISCOITO : SAFETY_PADDING_ESMALTE;
 
-    for (const piece of sorted) {
+    const placedSet = new Set<string>();
+
+    for (let idx = 0; idx < sorted.length; idx++) {
+      const piece = sorted[idx];
+      if (placedSet.has(piece.id)) continue;
+
       let placed = false;
 
-      // FOR BISCOITO: Try to stack this piece on an existing piece first (since biscoito can be stacked!)
+      // 1. FOR BISCOITO: Try to stack this piece on an existing piece first (since biscoito can be stacked!)
       if (tipo === 'biscoito') {
         for (const shelf of shelves.filter(s => s.tipo === 'biscoito')) {
-          // Look for an existing base piece that doesn't have anything stacked on it yet
           const potentialBase = shelf.pieces.find(p => 
             !p.stackedOnId && 
             piece.largura <= p.w + 1.5 && 
@@ -161,12 +240,12 @@ function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
               h: piece.altura,
               x: potentialBase.x,
               y: potentialBase.y,
-              color: getNextColor(),
+              color: pieceColors[piece.id],
               stackedOnId: potentialBase.id
             });
             shelf.maxHeight = Math.max(shelf.maxHeight, potentialBase.h + piece.altura);
-            // We do not add to utilizationArea because it sits in the same 2D footprint!
             placed = true;
+            placedSet.add(piece.id);
             break;
           }
         }
@@ -174,39 +253,56 @@ function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
 
       if (placed) continue;
 
-      // Try placing on existing shelves of this type
+      // 2. Try placing on existing shelves of this type
       for (const shelf of shelves.filter(s => s.tipo === tipo)) {
-        const result = tryPlacePieceOnShelf(piece, shelf, getNextColor(), padding);
+        const result = tryPlacePieceOnShelf(piece, shelf, pieceColors[piece.id], padding);
         if (result) {
           shelf.pieces.push(result);
           shelf.maxHeight = Math.max(shelf.maxHeight, piece.altura);
           shelf.utilizationArea += piece.largura * piece.profundidade;
+          
+          // Update support columns rotation based on the new piece
+          const finalPieces = shelf.pieces.map(p => ({ x: p.x, y: p.y, w: p.w, d: p.d }));
+          const safeCols = findSafeColumnsRotation(finalPieces, padding);
+          if (safeCols) {
+            shelf.supportColumns = safeCols;
+          }
           placed = true;
+          placedSet.add(piece.id);
           break;
         }
       }
 
-      // If couldn't place on existing, create a new shelf
-      if (!placed) {
-        const newShelf: ShelfLevel = {
-          id: `shelf-${tipo}-${shelves.length + 1}`,
-          number: shelves.length + 1,
-          tipo,
-          pieces: [],
-          maxHeight: piece.altura,
-          utilizationArea: 0
-        };
+      if (placed) continue;
 
-        const result = tryPlacePieceOnShelf(piece, newShelf, getNextColor(), padding);
-        if (result) {
-          newShelf.pieces.push(result);
-          newShelf.maxHeight = piece.altura;
-          newShelf.utilizationArea = piece.largura * piece.profundidade;
-          shelves.push(newShelf);
-        } else {
-          // If a piece is so large it doesn't fit on an empty shelf, center it anyway
-          const color = getNextColor();
-          newShelf.pieces.push({
+      // 3. If it couldn't be placed on existing shelves, we create a new shelf.
+      // To prevent centering the first piece at (0,0) and blocking the shelf for remaining pieces,
+      // we test several candidate starting positions for this first piece to find the layout
+      // that maximizes the number of remaining pieces we can pack on this new shelf!
+      const remainingUnpacked = sorted.slice(idx).filter(p => !placedSet.has(p.id));
+      const newShelfId = `shelf-${tipo}-${shelves.length + 1}`;
+      const newShelfNumber = shelves.length + 1;
+
+      const emptyShelf: ShelfLevel = {
+        id: newShelfId,
+        number: newShelfNumber,
+        tipo,
+        pieces: [],
+        maxHeight: piece.altura,
+        utilizationArea: 0
+      };
+
+      const candidates = getCandidatePositionsForPiece(piece, emptyShelf, padding);
+      let bestShelf: ShelfLevel | null = null;
+      let bestPackedIds: string[] = [];
+
+      if (candidates.length === 0) {
+        // Fallback: Place at center (0,0) if no candidate positions fit
+        const fallbackShelf: ShelfLevel = {
+          id: newShelfId,
+          number: newShelfNumber,
+          tipo,
+          pieces: [{
             id: piece.id,
             nome: piece.nome,
             tipo,
@@ -215,11 +311,109 @@ function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
             h: piece.altura,
             x: 0,
             y: 0,
-            color
-          });
-          newShelf.maxHeight = piece.altura;
-          newShelf.utilizationArea = piece.largura * piece.profundidade;
-          shelves.push(newShelf);
+            color: pieceColors[piece.id]
+          }],
+          maxHeight: piece.altura,
+          utilizationArea: piece.largura * piece.profundidade,
+          supportColumns: SUPPORT_COLUMNS
+        };
+        bestShelf = fallbackShelf;
+        bestPackedIds = [piece.id];
+      } else {
+        // Test each candidate position and find the one with the best packing yield
+        for (const cand of candidates) {
+          const initialPiece = { x: cand.x, y: cand.y, w: piece.largura, d: piece.profundidade };
+          const initialCols = findSafeColumnsRotation([initialPiece], padding);
+          if (!initialCols) continue; // Skip candidate if columns cannot co-exist with just this piece
+
+          const tempShelf: ShelfLevel = {
+            id: newShelfId,
+            number: newShelfNumber,
+            tipo,
+            pieces: [{
+              id: piece.id,
+              nome: piece.nome,
+              tipo,
+              w: piece.largura,
+              d: piece.profundidade,
+              h: piece.altura,
+              x: cand.x,
+              y: cand.y,
+              color: pieceColors[piece.id]
+            }],
+            maxHeight: piece.altura,
+            utilizationArea: piece.largura * piece.profundidade,
+            supportColumns: initialCols
+          };
+
+          const packedIds = [piece.id];
+
+          // Try to pack as many of the other remaining pieces on this shelf as possible
+          for (let j = 1; j < remainingUnpacked.length; j++) {
+            const nextPiece = remainingUnpacked[j];
+            let nextPlaced = false;
+
+            // Try stacking if it's biscoito
+            if (tipo === 'biscoito') {
+              const potentialBase = tempShelf.pieces.find(p => 
+                !p.stackedOnId && 
+                nextPiece.largura <= p.w + 1.5 && 
+                nextPiece.profundidade <= p.d + 1.5 &&
+                (p.h + nextPiece.altura) <= 30
+              );
+
+              if (potentialBase) {
+                tempShelf.pieces.push({
+                  id: nextPiece.id,
+                  nome: nextPiece.nome,
+                  tipo: 'biscoito',
+                  w: nextPiece.largura,
+                  d: nextPiece.profundidade,
+                  h: nextPiece.altura,
+                  x: potentialBase.x,
+                  y: potentialBase.y,
+                  color: pieceColors[nextPiece.id],
+                  stackedOnId: potentialBase.id
+                });
+                tempShelf.maxHeight = Math.max(tempShelf.maxHeight, potentialBase.h + nextPiece.altura);
+                packedIds.push(nextPiece.id);
+                nextPlaced = true;
+              }
+            }
+
+            if (nextPlaced) continue;
+
+            const result = tryPlacePieceOnShelf(nextPiece, tempShelf, pieceColors[nextPiece.id], padding);
+            if (result) {
+              tempShelf.pieces.push(result);
+              tempShelf.maxHeight = Math.max(tempShelf.maxHeight, nextPiece.altura);
+              tempShelf.utilizationArea += nextPiece.largura * nextPiece.profundidade;
+              packedIds.push(nextPiece.id);
+
+              // Update support columns rotation
+              const currentPieces = tempShelf.pieces.map(p => ({ x: p.x, y: p.y, w: p.w, d: p.d }));
+              const safeCols = findSafeColumnsRotation(currentPieces, padding);
+              if (safeCols) {
+                tempShelf.supportColumns = safeCols;
+              }
+            }
+          }
+
+          // Keep candidate with higher piece count, or higher area utilization if tied
+          if (!bestShelf || 
+              packedIds.length > bestPackedIds.length || 
+              (packedIds.length === bestPackedIds.length && tempShelf.utilizationArea > bestShelf.utilizationArea)) {
+            bestShelf = tempShelf;
+            bestPackedIds = packedIds;
+          }
+        }
+      }
+
+      // Add the chosen shelf layout to shelves and mark all packed items as placed
+      if (bestShelf) {
+        shelves.push(bestShelf);
+        for (const id of bestPackedIds) {
+          placedSet.add(id);
         }
       }
     }
@@ -252,19 +446,7 @@ function tryPlacePieceOnShelf(piece: PieceItem, shelf: ShelfLevel, color: string
         continue;
       }
 
-      // 2. Check overlap with support columns (3.5cm diameter / 1.75cm radius)
-      let overlapsColumn = false;
-      for (const col of SUPPORT_COLUMNS) {
-        if (rectangleOverlapsCircle(x, y, w, d, col.x, col.y, col.r, padding)) {
-          overlapsColumn = true;
-          break;
-        }
-      }
-      if (overlapsColumn) {
-        continue;
-      }
-
-      // 3. Check overlap with existing packed pieces (using the specific padding)
+      // 2. Check overlap with existing packed pieces (using the specific padding)
       let overlapsPiece = false;
       for (const p of shelf.pieces) {
         if (rectanglesOverlap(x, y, w, d, p.x, p.y, p.w, p.d, padding)) {
@@ -274,6 +456,16 @@ function tryPlacePieceOnShelf(piece: PieceItem, shelf: ShelfLevel, color: string
       }
       if (overlapsPiece) {
         continue;
+      }
+
+      // 3. Check if there is a safe support column rotation for the updated set of pieces
+      const trialPieces = [
+        ...shelf.pieces.map(p => ({ x: p.x, y: p.y, w: p.w, d: p.d })),
+        { x, y, w, d }
+      ];
+      const safeCols = findSafeColumnsRotation(trialPieces, padding);
+      if (!safeCols) {
+        continue; // No safe column orientation can be found for this layout, skip
       }
 
       // Fits! Return packed piece representation
@@ -472,7 +664,7 @@ export const KilnOptimizer: React.FC<KilnOptimizerProps> = ({ piecesList }) => {
                 <line x1="0" y1="-26.5" x2="0" y2="26.5" stroke="#D5D0C5" strokeWidth="0.1" strokeDasharray="1,1" />
 
                 {/* Support Columns (3 support props, 3.5cm diameter -> 1.75cm radius) */}
-                {SUPPORT_COLUMNS.map((col, idx) => (
+                {(activeShelf?.supportColumns || SUPPORT_COLUMNS).map((col, idx) => (
                   <g key={`col-${idx}`}>
                     <circle 
                       cx={col.x} 
