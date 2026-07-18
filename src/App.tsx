@@ -977,6 +977,26 @@ export default function App() {
 
                   <button 
                     onClick={() => {
+                      setTipoQueima('ambas');
+                      setMetodoQueima('ajuste_inteligente');
+                      setMetodoQueimaEsmalte('ajuste_inteligente');
+                    }}
+                    className={`flex-shrink-0 w-[130px] sm:w-auto flex flex-col p-2 rounded-lg text-left transition-all border cursor-pointer ${tipoQueima === 'ambas' ? 'border-[#C15E3F] bg-[#FDF7F5]/50 ring-1 ring-[#C15E3F]/10 shadow-sm' : 'border-[#E2DED0]/80 bg-white hover:border-[#8A847C] hover:bg-[#FAF9F6]'}`}
+                    id="btn-select-ambas"
+                  >
+                    <div className="flex justify-between items-center w-full mb-0.5">
+                      <span className={`text-[8px] uppercase tracking-wider font-semibold ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 03</span>
+                      <div className="flex gap-0.5">
+                        <Flame className={`w-3 h-3 ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
+                        <Sparkles className={`w-3 h-3 ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold text-[#4A443F]">Ambas</span>
+                    <span className="text-[9px] text-[#8A847C] mt-0.5 leading-snug">Biscoito + Esmalte. Soma final.</span>
+                  </button>
+
+                  <button 
+                    onClick={() => {
                       setTipoQueima('monoqueima');
                       setMetodoQueima('ajuste_inteligente');
                     }}
@@ -984,7 +1004,7 @@ export default function App() {
                     id="btn-select-monoqueima"
                   >
                     <div className="flex justify-between items-center w-full mb-0.5">
-                      <span className={`text-[8px] uppercase tracking-wider font-semibold ${tipoQueima === 'monoqueima' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 03</span>
+                      <span className={`text-[8px] uppercase tracking-wider font-semibold ${tipoQueima === 'monoqueima' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 04</span>
                       <Sparkles className={`w-3 h-3 ${tipoQueima === 'monoqueima' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
                     </div>
                     <span className="text-xs font-bold text-[#4A443F]">Monoqueima</span>
@@ -1000,31 +1020,11 @@ export default function App() {
                     id="btn-select-terceira-queima"
                   >
                     <div className="flex justify-between items-center w-full mb-0.5">
-                      <span className={`text-[8px] uppercase tracking-wider font-semibold ${tipoQueima === 'terceira_queima' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 04</span>
+                      <span className={`text-[8px] uppercase tracking-wider font-semibold ${tipoQueima === 'terceira_queima' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 05</span>
                       <Sparkles className={`w-3 h-3 ${tipoQueima === 'terceira_queima' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
                     </div>
                     <span className="text-xs font-bold text-[#4A443F]">3ª Queima</span>
                     <span className="text-[9px] text-[#8A847C] mt-0.5 leading-snug">Baixa Temp (750ºC). Só Forno Inteiro.</span>
-                  </button>
-
-                  <button 
-                    onClick={() => {
-                      setTipoQueima('ambas');
-                      setMetodoQueima('ajuste_inteligente');
-                      setMetodoQueimaEsmalte('ajuste_inteligente');
-                    }}
-                    className={`flex-shrink-0 w-[130px] sm:w-auto flex flex-col p-2 rounded-lg text-left transition-all border cursor-pointer ${tipoQueima === 'ambas' ? 'border-[#C15E3F] bg-[#FDF7F5]/50 ring-1 ring-[#C15E3F]/10 shadow-sm' : 'border-[#E2DED0]/80 bg-white hover:border-[#8A847C] hover:bg-[#FAF9F6]'}`}
-                    id="btn-select-ambas"
-                  >
-                    <div className="flex justify-between items-center w-full mb-0.5">
-                      <span className={`text-[8px] uppercase tracking-wider font-semibold ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`}>Opção 05</span>
-                      <div className="flex gap-0.5">
-                        <Flame className={`w-3 h-3 ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
-                        <Sparkles className={`w-3 h-3 ${tipoQueima === 'ambas' ? 'text-[#C15E3F]' : 'text-[#8A847C]'}`} />
-                      </div>
-                    </div>
-                    <span className="text-xs font-bold text-[#4A443F]">Ambas</span>
-                    <span className="text-[9px] text-[#8A847C] mt-0.5 leading-snug">Biscoito + Esmalte. Soma final.</span>
                   </button>
                 </div>
               </div>
