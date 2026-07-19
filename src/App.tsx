@@ -588,6 +588,70 @@ export default function App() {
     };
   }, [piecesList, metodoQueima, metodoQueimaEsmalte]);
 
+  const piecesWithAdjustedCosts = useMemo(() => {
+    const costMap: Record<string, number> = {};
+
+    // Group pieces by tipo
+    const groups: Record<FiringType, PieceItem[]> = {
+      biscoito: [],
+      esmalte: [],
+      monoqueima: [],
+      terceira_queima: []
+    };
+
+    piecesList.forEach(p => {
+      if (groups[p.tipo]) {
+        groups[p.tipo].push(p);
+      }
+    });
+
+    // For each group, we find its final cost in orcamentoDetalhado
+    const detalhesGrupos = orcamentoDetalhado.detalhesGrupos;
+
+    Object.keys(groups).forEach(key => {
+      const type = key as FiringType;
+      const groupPieces = groups[type];
+      if (groupPieces.length === 0) return;
+
+      const grupoDetalhe = detalhesGrupos.find(dg => dg.tipo === type);
+      const finalGroupCost = grupoDetalhe ? grupoDetalhe.cost : 0;
+      const mode = grupoDetalhe ? grupoDetalhe.mode : 'Compartilhada';
+
+      if (mode.startsWith('Compartilhada')) {
+        // Shared mode: use the standard shared volume cost directly
+        groupPieces.forEach(p => {
+          let rate = 3312.8837;
+          let minCost = 12.00;
+          if (type === 'esmalte') {
+            rate = 3975.4601;
+            minCost = 15.00;
+          } else if (type === 'monoqueima') {
+            rate = 7361.9632;
+            minCost = 25.00;
+          } else if (type === 'terceira_queima') {
+            rate = 3312.8837;
+          }
+
+          const vCost = p.volumeM3 * rate;
+          costMap[p.id] = type === 'terceira_queima' ? finalGroupCost / groupPieces.length : Math.max(vCost, minCost);
+        });
+      } else {
+        // Flat rate mode (Meia Fornada, Fornada Inteira, Reserva de Prateleira):
+        // Distribute proportional to volume!
+        const totalVolume = groupPieces.reduce((sum, p) => sum + p.volumeM3, 0);
+        groupPieces.forEach(p => {
+          const share = totalVolume > 0 ? (p.volumeM3 / totalVolume) * finalGroupCost : finalGroupCost / groupPieces.length;
+          costMap[p.id] = share;
+        });
+      }
+    });
+
+    return piecesList.map(p => ({
+      ...p,
+      custoCalculado: costMap[p.id] !== undefined ? costMap[p.id] : p.custoCalculado
+    }));
+  }, [piecesList, orcamentoDetalhado]);
+
   const totalOrcamento = orcamentoDetalhado.valorFinalQueima;
 
   // Copy Quote & WhatsApp share text
@@ -596,7 +660,7 @@ export default function App() {
     msg += `--------------------------------------------------\n`;
     msg += `*Especificação do Forno:* 195 Litros | Cone 7 (1240ºC)\n\n`;
     
-    piecesList.forEach((p, idx) => {
+    piecesWithAdjustedCosts.forEach((p, idx) => {
       const tipoLabel = p.tipo === 'biscoito' ? 'Queima de Biscoito (1000ºC)' :
                         p.tipo === 'esmalte' ? 'Queima de Esmalte (1240ºC)' :
                         p.tipo === 'monoqueima' ? 'Monoqueima (1240ºC)' : 'Terceira Queima (750ºC)';
@@ -705,7 +769,7 @@ export default function App() {
       doc.text('ITENS DO ORCAMENTO', 15, y);
       y += 8;
 
-      piecesList.forEach((p, idx) => {
+      piecesWithAdjustedCosts.forEach((p, idx) => {
         if (y > 250) {
           doc.addPage();
           y = 20;
@@ -930,7 +994,7 @@ export default function App() {
           clienteId: currentUser.id,
           clienteNome: currentUser.nome,
           clienteEmail: currentUser.email,
-          pecas: piecesList,
+          pecas: piecesWithAdjustedCosts,
           total: totalOrcamento
         })
       });
@@ -1579,7 +1643,7 @@ export default function App() {
                         <p className="text-[11px] text-[#8A847C] mt-1">Configure as dimensões à esquerda e adicione peças.</p>
                       </div>
                     ) : (
-                      piecesList.map((p) => (
+                      piecesWithAdjustedCosts.map((p) => (
                         <div key={p.id} className="flex justify-between items-center border-b border-[#F0EEE8] pb-2.5">
                           <div>
                             <div className="flex items-center gap-1.5">
