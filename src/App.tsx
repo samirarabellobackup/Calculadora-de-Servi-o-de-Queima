@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Flame, 
   Trash2, 
@@ -42,7 +42,7 @@ import {
   Cell 
 } from 'recharts';
 import { FiringType, PieceItem, Order, User as UserType, NotificationItem } from './types';
-import { KilnOptimizer } from './components/KilnOptimizer';
+import { KilnOptimizer, packPiecesOnShelves } from './components/KilnOptimizer';
 
 export default function App() {
   // Navigation tabs
@@ -237,7 +237,7 @@ export default function App() {
       if (resolvedMethod === 'fornada_inteira' || h > 30) {
         return 450.00;
       }
-      if (resolvedMethod === 'meia_fornada') {
+      if (resolvedMethod === 'meia_fornada' || h > 14.5) {
         return 241.88;
       }
       // Compartilhada por volume m³ (baseado em R$ 540,00 para 0,163 m³ útil)
@@ -392,8 +392,203 @@ export default function App() {
     setGeminiRelatorio(null);
   };
 
-  // Total calculation for the whole quote
-  const totalOrcamento = piecesList.reduce((acc, curr) => acc + curr.custoCalculado, 0);
+  // Total calculation for the whole quote based on the virtual kiln simulation packing
+  const orcamentoDetalhado = useMemo(() => {
+    if (piecesList.length === 0) {
+      return {
+        volumeTotalGeometricoL: 0,
+        volumeEfetivoOcupadoL: 0,
+        porcentagemOcupacaoForno: 0,
+        qtdPrateleiras: 0,
+        alturaOcupadaCm: 0,
+        qtdNiveisEstimada: 0,
+        modalidadeCobranca: 'Nenhuma',
+        valorFinalQueima: 0,
+        detalhesGrupos: []
+      };
+    }
+
+    // Run the packing simulation
+    const shelves = packPiecesOnShelves(piecesList);
+
+    // 1. Volume total geométrico das peças
+    const volumeTotalGeometricoL = piecesList.reduce((acc, curr) => acc + (curr.volumeM3 * 1000), 0);
+
+    // Useful Shelf Area
+    const SHELF_RADIUS = 25; // 50cm diameter planar useful area
+    const totalShelfArea = Math.PI * SHELF_RADIUS * SHELF_RADIUS; // ~1963.5 cm²
+
+    // 2. Volume efetivamente ocupado
+    const volumeEfetivoOcupadoCm3 = shelves.reduce((acc, s) => {
+      const area = s.utilizationArea || 0;
+      const height = s.maxHeight || 0;
+      return acc + (area * height);
+    }, 0);
+    const volumeEfetivoOcupadoL = volumeEfetivoOcupadoCm3 / 1000;
+
+    // 3. Porcentagem de ocupação do forno (referência de 163 litros úteis)
+    const porcentagemOcupacaoForno = Math.min((volumeEfetivoOcupadoL / 163) * 100, 100);
+
+    // 4. Quantidade de prateleiras utilizadas
+    const qtdPrateleiras = shelves.length;
+
+    // 5. Altura ocupada no forno
+    const alturaOcupadaCm = shelves.reduce((acc, s) => acc + (s.maxHeight || 0), 0);
+
+    // 6. Quantidade estimada de níveis
+    const qtdNiveisEstimada = qtdPrateleiras;
+
+    // Group shelves by firing type to compute group pricing
+    const groups: Record<FiringType, typeof shelves> = {
+      biscoito: [],
+      esmalte: [],
+      monoqueima: [],
+      terceira_queima: []
+    };
+
+    shelves.forEach(s => {
+      if (groups[s.tipo as FiringType]) {
+        groups[s.tipo as FiringType].push(s);
+      }
+    });
+
+    let totalCost = 0;
+    const detalhesGrupos: Array<{
+      tipo: FiringType;
+      shelves: typeof shelves;
+      mode: string;
+      cost: number;
+    }> = [];
+
+    // Firing-specific rates and methods
+    Object.keys(groups).forEach(key => {
+      const type = key as FiringType;
+      const groupShelves = groups[type];
+      if (groupShelves.length === 0) return;
+
+      const groupHeight = groupShelves.reduce((acc, s) => acc + (s.maxHeight || 0), 0);
+      const groupNumShelves = groupShelves.length;
+      
+      const groupPieces = piecesList.filter(p => p.tipo === type);
+
+      let costFornadaInteira = 0;
+      let costMeiaFornada = 0;
+      let costCompartilhada = 0;
+      let costReservaPrateleira = 0;
+
+      if (type === 'biscoito') {
+        costFornadaInteira = 450.00;
+        costMeiaFornada = 241.88;
+        costCompartilhada = groupPieces.reduce((sum, p) => {
+          const vCost = p.volumeM3 * 3312.8837;
+          return sum + Math.max(vCost, 12.00);
+        }, 0);
+      } else if (type === 'esmalte') {
+        costFornadaInteira = 540.00;
+        costMeiaFornada = 290.25;
+        costCompartilhada = groupPieces.reduce((sum, p) => {
+          const vCost = p.volumeM3 * 3975.4601;
+          return sum + Math.max(vCost, 15.00);
+        }, 0);
+        costReservaPrateleira = groupShelves.reduce((sum, s) => {
+          if (s.maxHeight <= 10) return sum + 60.00;
+          return sum + 80.00;
+        }, 0);
+      } else if (type === 'monoqueima') {
+        costFornadaInteira = 1000.00;
+        costMeiaFornada = 532.13;
+        costCompartilhada = groupPieces.reduce((sum, p) => {
+          const vCost = p.volumeM3 * 7361.9632;
+          return sum + Math.max(vCost, 25.00);
+        }, 0);
+      } else if (type === 'terceira_queima') {
+        costFornadaInteira = 540.00;
+        costCompartilhada = 540.00;
+      }
+
+      const fitsInMeia = groupHeight <= 30 && groupNumShelves <= 2 && groupPieces.every(p => p.altura <= 30);
+      const fitsInReserva = type === 'esmalte' && groupPieces.every(p => p.altura <= 14.5);
+
+      let selectedMode = 'ajuste_inteligente';
+      if (type === 'biscoito') {
+        selectedMode = metodoQueima;
+      } else if (type === 'esmalte') {
+        selectedMode = metodoQueimaEsmalte;
+      } else {
+        selectedMode = 'ajuste_inteligente';
+      }
+
+      let resolvedMode = 'Compartilhada';
+      let finalGroupCost = 0;
+
+      if (selectedMode === 'fornada_inteira') {
+        resolvedMode = 'Fornada Inteira';
+        finalGroupCost = costFornadaInteira;
+      } else if (selectedMode === 'meia_fornada') {
+        if (fitsInMeia) {
+          resolvedMode = 'Meia Fornada';
+          finalGroupCost = costMeiaFornada;
+        } else {
+          resolvedMode = 'Fornada Inteira (Forçado - Excede Meia)';
+          finalGroupCost = costFornadaInteira;
+        }
+      } else if (selectedMode === 'compartilhada') {
+        resolvedMode = 'Compartilhada';
+        finalGroupCost = costCompartilhada;
+      } else if (selectedMode === 'reserva_prateleira' && type === 'esmalte') {
+        if (fitsInReserva) {
+          resolvedMode = 'Reserva de Prateleira';
+          finalGroupCost = costReservaPrateleira;
+        } else {
+          resolvedMode = 'Meia Fornada (Forçado - Excede Reserva)';
+          finalGroupCost = fitsInMeia ? costMeiaFornada : costFornadaInteira;
+        }
+      } else {
+        // Ajuste Inteligente
+        const options: Array<{ mode: string; cost: number }> = [];
+        options.push({ mode: 'Compartilhada', cost: costCompartilhada });
+        if (fitsInMeia) {
+          options.push({ mode: 'Meia Fornada', cost: costMeiaFornada });
+        }
+        options.push({ mode: 'Fornada Inteira', cost: costFornadaInteira });
+        if (type === 'esmalte' && fitsInReserva) {
+          options.push({ mode: 'Reserva de Prateleira', cost: costReservaPrateleira });
+        }
+        options.sort((a, b) => a.cost - b.cost);
+        resolvedMode = options[0].mode;
+        finalGroupCost = options[0].cost;
+      }
+
+      totalCost += finalGroupCost;
+      detalhesGrupos.push({
+        tipo: type,
+        shelves: groupShelves,
+        mode: resolvedMode,
+        cost: finalGroupCost
+      });
+    });
+
+    let modalidadeCobranca = 'Nenhuma';
+    if (detalhesGrupos.length === 1) {
+      modalidadeCobranca = detalhesGrupos[0].mode;
+    } else if (detalhesGrupos.length > 1) {
+      modalidadeCobranca = detalhesGrupos.map(dg => `${dg.tipo.toUpperCase()}: ${dg.mode}`).join(' | ');
+    }
+
+    return {
+      volumeTotalGeometricoL,
+      volumeEfetivoOcupadoL,
+      porcentagemOcupacaoForno,
+      qtdPrateleiras,
+      alturaOcupadaCm,
+      qtdNiveisEstimada,
+      modalidadeCobranca,
+      valorFinalQueima: totalCost,
+      detalhesGrupos
+    };
+  }, [piecesList, metodoQueima, metodoQueimaEsmalte]);
+
+  const totalOrcamento = orcamentoDetalhado.valorFinalQueima;
 
   // Copy Quote & WhatsApp share text
   const generateMessageText = (): string => {
@@ -414,7 +609,7 @@ export default function App() {
       msg += `  • Modalidade: ${metodoLabel}\n`;
       msg += `  • Medidas: ${p.altura}x${p.largura}x${p.profundidade} cm (A x L x P)\n`;
       msg += `  • Volume: ${(p.volumeM3 * 1000).toFixed(3)}L / ${p.volumeM3.toFixed(6)} m³\n`;
-      msg += `  • Custo Unitário: R$ ${p.custoCalculado.toFixed(2)}\n`;
+      msg += `  • Custo Unitário Referência: R$ ${p.custoCalculado.toFixed(2)}\n`;
 
       if (p.detalhesTecnicos) {
         msg += `  • _Info Técnica:_ Argila ${p.detalhesTecnicos.nacionalidadeMassa} (${p.detalhesTecnicos.marcaMassa}), Temp Máx: ${p.detalhesTecnicos.tempMaximaQueima}ºC\n`;
@@ -426,7 +621,16 @@ export default function App() {
     });
 
     msg += `--------------------------------------------------\n`;
-    msg += `*Total Estimado:* R$ ${totalOrcamento.toFixed(2)}\n\n`;
+    msg += `*RELATÓRIO DE OCUPAÇÃO REAL (SIMULAÇÃO):*\n`;
+    msg += `  • Volume Total das Peças: ${orcamentoDetalhado.volumeTotalGeometricoL.toFixed(3)} L\n`;
+    msg += `  • Volume Efetivamente Ocupado: ${orcamentoDetalhado.volumeEfetivoOcupadoL.toFixed(3)} L\n`;
+    msg += `  • Ocupação Útil do Forno: ${orcamentoDetalhado.porcentagemOcupacaoForno.toFixed(1)}%\n`;
+    msg += `  • Prateleiras Utilizadas: ${orcamentoDetalhado.qtdPrateleiras}\n`;
+    msg += `  • Altura Ocupada: ${orcamentoDetalhado.alturaOcupadaCm} cm\n`;
+    msg += `  • Níveis de Prateleira: ${orcamentoDetalhado.qtdNiveisEstimada}\n`;
+    msg += `  • Modalidade de Cobrança: ${orcamentoDetalhado.modalidadeCobranca}\n`;
+    msg += `--------------------------------------------------\n`;
+    msg += `*Total Estimado Final:* R$ ${totalOrcamento.toFixed(2)}\n\n`;
     msg += `_Observações Importantes:_\n`;
     msg += `⚠️ Na queima de esmalte, o espaçamento de segurança é indispensável.\n`;
     msg += `⚠️ Danos provocados por esmalte escorrido às placas e prateleiras são de responsabilidade financeira do ceramista.\n`;
@@ -550,6 +754,31 @@ export default function App() {
 
         y += p.detalhesTecnicos ? 44 : 30;
       });
+
+      // Technical Occupancy Report block in PDF
+      if (y > 180) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFillColor(245, 243, 239);
+      doc.roundedRect(15, y, 180, 38, 2, 2, 'F');
+      doc.setDrawColor(226, 222, 208);
+      doc.roundedRect(15, y, 180, 38, 2, 2, 'D');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(74, 68, 63);
+      doc.text('RELATORIO TECNICO DE OCUPACAO REAL (SIMULACAO)', 20, y + 6);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(45, 45, 45);
+      doc.text(`Volume Total das Pecas: ${orcamentoDetalhado.volumeTotalGeometricoL.toFixed(3)} L | Volume Efetivamente Ocupado: ${orcamentoDetalhado.volumeEfetivoOcupadoL.toFixed(3)} L`, 20, y + 14);
+      doc.text(`Porcentagem Ocupacao Util Forno: ${orcamentoDetalhado.porcentagemOcupacaoForno.toFixed(1)}% | Altura Ocupada Forno: ${orcamentoDetalhado.alturaOcupadaCm} cm`, 20, y + 20);
+      doc.text(`Quantidade Prateleiras: ${orcamentoDetalhado.qtdPrateleiras} | Niveis de Prateleira: ${orcamentoDetalhado.qtdNiveisEstimada}`, 20, y + 26);
+      doc.text(`Modalidade de Cobranca Decidida: ${orcamentoDetalhado.modalidadeCobranca}`, 20, y + 32);
+
+      y += 44;
 
       // Total and Terms box
       if (y > 220) {
@@ -1380,6 +1609,47 @@ export default function App() {
                       ))
                     )}
                   </div>
+
+                  {/* Real Occupancy Report Details */}
+                  {piecesList.length > 0 && (
+                    <div className="border-t border-[#E2DED0] pt-4 pb-2 space-y-3">
+                      <h4 className="text-[10px] font-bold uppercase tracking-wider text-[#C15E3F]">
+                        Relatório Técnico de Ocupação Real
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-[#4A443F]">
+                        <div className="flex justify-between border-b border-dashed border-[#E2DED0] pb-1">
+                          <span className="text-[#8A847C]">Volume Total das Peças:</span>
+                          <span className="font-semibold font-mono">{orcamentoDetalhado.volumeTotalGeometricoL.toFixed(3)} L</span>
+                        </div>
+                        <div className="flex justify-between border-b border-dashed border-[#E2DED0] pb-1">
+                          <span className="text-[#8A847C]">Volume Real Ocupado:</span>
+                          <span className="font-semibold font-mono">{orcamentoDetalhado.volumeEfetivoOcupadoL.toFixed(3)} L</span>
+                        </div>
+                        <div className="flex justify-between border-b border-dashed border-[#E2DED0] pb-1">
+                          <span className="text-[#8A847C]">Ocupação Útil do Forno:</span>
+                          <span className="font-semibold font-mono">{orcamentoDetalhado.porcentagemOcupacaoForno.toFixed(1)}%</span>
+                        </div>
+                        <div className="flex justify-between border-b border-dashed border-[#E2DED0] pb-1">
+                          <span className="text-[#8A847C]">Prateleiras Utilizadas:</span>
+                          <span className="font-semibold">{orcamentoDetalhado.qtdPrateleiras}</span>
+                        </div>
+                        <div className="flex justify-between border-b border-dashed border-[#E2DED0] pb-1">
+                          <span className="text-[#8A847C]">Altura Ocupada no Forno:</span>
+                          <span className="font-semibold font-mono">{orcamentoDetalhado.alturaOcupadaCm} cm</span>
+                        </div>
+                        <div className="flex justify-between border-b border-dashed border-[#E2DED0] pb-1">
+                          <span className="text-[#8A847C]">Níveis de Prateleira:</span>
+                          <span className="font-semibold">{orcamentoDetalhado.qtdNiveisEstimada}</span>
+                        </div>
+                      </div>
+                      <div className="p-2.5 bg-[#FDF7F5] rounded-lg border border-[#F0EEE8] text-[11px]">
+                        <div className="flex justify-between items-center gap-2">
+                          <span className="text-[#8A847C] font-semibold shrink-0">Modalidade de Cobrança:</span>
+                          <span className="font-bold text-[#C15E3F] text-right">{orcamentoDetalhado.modalidadeCobranca}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Total pricing calculation details */}
                   {piecesList.length > 0 && (

@@ -186,7 +186,7 @@ function getCandidatePositionsForPiece(
 }
 
 // 2D Bin Packing algorithm for circular shelves
-function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
+export function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
   const shelves: ShelfLevel[] = [];
   
   // Separate into separate firing runs (different temperatures/types)
