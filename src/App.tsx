@@ -232,58 +232,55 @@ export default function App() {
     }
 
     const volumeM3 = (h * w * d) / 1000000;
-    const handlingFee = 15.00; // Taxa de manuseio e acondicionamento técnico
 
     if (type === 'biscoito') {
       if (resolvedMethod === 'fornada_inteira' || h > 30) {
-        return 300.00;
+        return 450.00;
       }
       if (resolvedMethod === 'meia_fornada') {
-        return 180.00;
+        return 241.88;
       }
-      // Compartilhada por volume m³
-      // R$ 3.251,53 por metro cúbico m3 (baseado em R$ 530,00 para 0,163 m³ útil)
-      const volumeCost = volumeM3 * 3251.53;
+      // Compartilhada por volume m³ (baseado em R$ 540,00 para 0,163 m³ útil)
+      const volumeCost = volumeM3 * 3312.8837;
       // Garante uma taxa mínima de queima por peça para não dar prejuízo ao ateliê
       const minQueimaVolume = 12.00;
-      return Math.max(volumeCost, minQueimaVolume) + handlingFee;
+      return Math.max(volumeCost, minQueimaVolume);
     } else if (type === 'esmalte') {
       // Esmalte (Alta temperatura, Cone 7 - 1240ºC)
       if (resolvedMethod === 'fornada_inteira' || h > 30) {
-        return 450.00;
+        return 540.00;
       }
       if (resolvedMethod === 'meia_fornada' || h > 14.5) {
-        return 250.00;
+        return 290.25;
       }
       if (resolvedMethod === 'compartilhada') {
-        // Compartilhada por volume m³
-        // R$ 3.742,33 por metro cúbico m3 (baseado em R$ 610,00 para 0,163 m³ útil)
-        const volumeCost = volumeM3 * 3742.33;
+        // Compartilhada por volume m³ (baseado em R$ 648,00 para 0,163 m³ útil)
+        const volumeCost = volumeM3 * 3975.4601;
         // Garante uma taxa mínima de queima por peça
         const minQueimaVolume = 15.00;
-        return Math.max(volumeCost, minQueimaVolume) + handlingFee;
+        return Math.max(volumeCost, minQueimaVolume);
       }
       // Reserva de prateleira (baseado nos níveis práticos de 10cm ou 14.5cm)
       if (h <= 10) {
-        return 60.00 + handlingFee; // 5 prateleiras de 10cm
+        return 60.00; // 5 prateleiras de 10cm
       } else {
-        return 80.00 + handlingFee; // 4 prateleiras de 14.5cm
+        return 80.00; // 4 prateleiras de 14.5cm
       }
     } else if (type === 'monoqueima') {
-      // Monoqueima (R$ 1.120,00 para o volume útil de 0,163 m³, por peça, meio forno ou forno inteiro)
+      // Monoqueima (R$ 1.000,00 para o volume útil de 0,163 m³)
       if (resolvedMethod === 'fornada_inteira' || h > 30) {
-        return 1120.00;
+        return 1000.00;
       }
       if (resolvedMethod === 'meia_fornada' || h > 14.5) {
-        return 620.00;
+        return 532.13;
       }
-      // Compartilhada por volume m³ (R$ 6.871,17 por metro cúbico)
-      const volumeCost = volumeM3 * 6871.17;
+      // Compartilhada por volume m³ (R$ 1.200,00 para o volume útil de 0,163 m³, R$ 7361,96 por metro cúbico)
+      const volumeCost = volumeM3 * 7361.9632;
       const minQueimaVolume = 25.00;
-      return Math.max(volumeCost, minQueimaVolume) + handlingFee;
+      return Math.max(volumeCost, minQueimaVolume);
     } else {
-      // Terceira queima (somente forno inteiro - R$ 560,00 para o volume útil de 0,163 m³)
-      return 560.00;
+      // Terceira queima (somente forno inteiro - R$ 540,00 para o volume útil de 0,163 m³)
+      return 540.00;
     }
   };
 
@@ -1387,16 +1384,7 @@ export default function App() {
                   {/* Total pricing calculation details */}
                   {piecesList.length > 0 && (
                     <div className="border-t border-[#E2DED0] pt-4 space-y-2">
-                      <div className="flex justify-between text-xs text-[#8A847C]">
-                        <span>Soma das peças</span>
-                        <span className="font-mono">R$ {piecesList.reduce((sum, p) => sum + (p.custoCalculado - 15), 0).toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-xs text-[#8A847C]">
-                        <span>Taxa de acondicionamento (R$ 15/peça)</span>
-                        <span className="font-mono">R$ {(piecesList.length * 15.00).toFixed(2)}</span>
-                      </div>
-                      
-                      <div className="flex justify-between items-end pt-2 border-t border-dashed border-[#E2DED0]">
+                      <div className="flex justify-between items-end pt-2">
                         <span className="text-sm font-bold text-[#4A443F]">Total Estimado</span>
                         <div className="text-right">
                           <span className="text-2xl font-bold text-[#C15E3F] block">
