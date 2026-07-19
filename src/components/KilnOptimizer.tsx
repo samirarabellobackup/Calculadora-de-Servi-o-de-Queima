@@ -410,11 +410,33 @@ export function packPiecesOnShelves(pieces: PieceItem[]): ShelfLevel[] {
       }
 
       // Add the chosen shelf layout to shelves and mark all packed items as placed
-      if (bestShelf) {
-        shelves.push(bestShelf);
-        for (const id of bestPackedIds) {
-          placedSet.add(id);
-        }
+      if (!bestShelf) {
+        // Fallback: Place at center (0,0) if candidate loop didn't yield a shelf due to support column conflicts
+        bestShelf = {
+          id: newShelfId,
+          number: newShelfNumber,
+          tipo,
+          pieces: [{
+            id: piece.id,
+            nome: piece.nome,
+            tipo,
+            w: piece.largura,
+            d: piece.profundidade,
+            h: piece.altura,
+            x: 0,
+            y: 0,
+            color: pieceColors[piece.id]
+          }],
+          maxHeight: piece.altura,
+          utilizationArea: piece.largura * piece.profundidade,
+          supportColumns: SUPPORT_COLUMNS
+        };
+        bestPackedIds = [piece.id];
+      }
+
+      shelves.push(bestShelf);
+      for (const id of bestPackedIds) {
+        placedSet.add(id);
       }
     }
   };
